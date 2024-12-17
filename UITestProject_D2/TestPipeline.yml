@@ -1,0 +1,162 @@
+parameters:
+  - name: environment
+    displayName: 'Execution Environment'
+    type: string
+    default: 'DEV'
+    values:
+      - DEV
+      - TEST
+      - SIT
+
+  - name: browserType
+    displayName: 'Browser Type'
+    type: string
+    default: 'Chromium'
+    values:
+      - Chromium
+      - Firefox
+      - WebKit
+
+  - name: baseUrl
+    displayName: 'Base URL'
+    type: string
+    default: 'http://jupiterprime-react-prod.s3-website.us-east-2.amazonaws.com/'
+
+  - name: headless
+    displayName: 'Headless Mode'
+    type: boolean
+    default: false
+
+  - name: screenshot
+    displayName: 'Enable Screenshot'
+    type: boolean
+    default: true
+
+  - name: enableTracing
+    displayName: 'Enable Tracing'
+    type: boolean
+    default: true
+
+  - name: traceFile
+    displayName: 'Trace File'
+    type: string
+    default: 'TestResults/trace.zip'
+
+  - name: enableVideo
+    displayName: 'Enable Video'
+    type: boolean
+    default: true
+
+  - name: videoDir
+    displayName: 'Video Directory'
+    type: string
+    default: 'TestResults/Video/'
+
+pool:
+  name: 'LinaSelfHostedPool'
+
+variables:
+  buildConfiguration: 'Release'
+  Environment: ${{ parameters.environment }}
+  BrowserType: ${{ parameters.browserType }}
+  BaseUrl: ${{ parameters.baseUrl }}
+  Headless: ${{ parameters.headless }}
+  Screenshot: ${{ parameters.screenshot }}
+  EnableTracing: ${{ parameters.enableTracing }}
+  TraceFile: ${{ parameters.traceFile }}
+  EnableVideo: ${{ parameters.enableVideo }}
+  VideoDir: ${{ parameters.videoDir }}
+
+stages:
+- stage: BuildAndTest
+  jobs:
+  - job: BuildAndTest
+    displayName: 'Build and Test'
+
+    steps:
+    - task: NuGetAuthenticate@1
+      displayName: 'Authenticate with NuGet'
+      inputs:
+        forceReinstallCredentialProvider: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore NuGet Packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+        feedsToUse: 'select'
+        vstsFeed: 'b9a29f21-b92b-47a4-814b-8b6d211212bb'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build Solution'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - script: |
+        echo "Environment: $(Environment)"
+        echo "BrowserType: $(BrowserType)"
+        echo "BaseUrl: $(BaseUrl)"
+        echo "Headless: $(Headless)"
+        echo "Screenshot: $(Screenshot)"
+        echo "EnableTracing: $(EnableTracing)"
+        echo "TraceFile: $(TraceFile)"
+        echo "EnableVideo: $(EnableVideo)"
+        echo "VideoDir: $(VideoDir)"
+      displayName: 'Print environment variables'
+
+    - task: VSTest@2
+      displayName: 'Run Playwright Tests'
+      inputs:
+        testAssemblyVer2: |
+          **\*UITestProject*.dll
+          !**\*TestAdapter.dll
+          !**\obj\**
+        rerunFailedTests: true
+        rerunType: basedOnTestFailureCount
+        rerunFailedTestCasesMaxLimit: 12
+        rerunMaxAttempts: 2
+        failOnMinTestsNotRun: true
+        minimumExpectedTests: 1
+        runInParallel: true
+        additionalTestParameters: |
+          --environment $(Environment) 
+          --browser $(BrowserType)
+          --baseUrl $(BaseUrl)
+          --headless $(Headless)
+          --screenshot $(Screenshot)
+          --enableTracing $(EnableTracing)
+          --traceFile $(TraceFile)
+          --enableVideo $(EnableVideo)
+          --videoDir $(VideoDir)
+      continueOnError: true
+      condition: succeededOrFailed()
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish Artifacts'
+      inputs:
+        command: 'publish'
+        publishWebProjects: false
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --output $(build.artifactstagingdirectory)'
+        zipAfterPublish: false
+        modifyOutputPath: false    
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)\UITestProject\bin\Release\net6.0'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)\TestResults'
+        artifactName: 'TraceFiles'
+
+    - task: SpecFlowPlus@0
+      inputs:
+        generatorSource: 'FeatureFolder'
+        projectFilePath: 'UITestProject'
+        projectName: 'PlaywrightTraining'
+        testExecutionJson: '**\TestExecution.json'
+        projectLanguage: 'en'
