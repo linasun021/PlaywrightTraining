@@ -1,0 +1,73 @@
+trigger:
+    - main
+pool:
+  name: 'LinaSelfHostedPool'
+
+variables:
+  buildConfiguration: 'Release'
+
+stages:
+- stage: BuildAndTest
+  jobs:
+  - job: BuildAndTest
+    displayName: 'Build and Test'
+    timeoutInMinutes: 600 # how long to run the job before automatically cancelling
+    cancelTimeoutInMinutes: 10 # how much time to give 'run always even if cancelled tasks' before stopping them
+
+    steps:
+    - task: NuGetAuthenticate@1
+      displayName: 'Authenticate with NuGet'
+      inputs:
+        forceReinstallCredentialProvider: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore NuGet Packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+        feedsToUse: 'select'
+        vstsFeed: 'b9a29f21-b92b-47a4-814b-8b6d211212bb'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build Solution'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - task: VSTest@2
+      displayName: 'Run Playwright Tests'
+      inputs:
+        testAssemblyVer2: |
+          **\*APITestProject*.dll
+          !**\*TestAdapter.dll
+          !**\obj\**
+        rerunFailedTests: true
+        rerunType: basedOnTestFailureCount
+        rerunFailedTestCasesMaxLimit: 12
+        rerunMaxAttempts: 2
+        failOnMinTestsNotRun: true
+        minimumExpectedTests: 1
+        runInParallel: true
+      continueOnError: true
+      condition: succeededOrFailed()
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish Artifacts'
+      inputs:
+        command: 'publish'
+        publishWebProjects: false
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --output $(build.artifactstagingdirectory)'
+        zipAfterPublish: false
+        modifyOutputPath: false
+
+    - task: SpecFlowPlus@0
+      inputs:
+        generatorSource: 'FeatureFolder'
+        projectFilePath: 'APITestProject.csproj'
+        projectName: 'PlaywrightTraining'
+        testExecutionJson: '**\TestExecution.json'
+        projectLanguage: 'en'
+      condition: succeededOrFailed()
+      continueOnError: true
